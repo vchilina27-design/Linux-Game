@@ -8,6 +8,9 @@
 #  No files are deleted, no system settings are changed.
 #  
 #  Secret stop command: type "Virus-stop" to end the prank.
+#
+#  This script runs INFINITELY until stopped. No timeouts.
+#  No crashes. Every effect is wrapped in error handling.
 # ============================================================
 
 # ---- Configuration ----
@@ -150,6 +153,13 @@ short_sleep() {
 get_term_size() {
     TERM_LINES=$(tput lines 2>/dev/null || echo 24)
     TERM_COLS=$(tput cols 2>/dev/null || echo 80)
+}
+
+# ---- Safe effect runner ----
+# Wraps every effect call so that a failure in any single
+# effect never kills the main loop. The virus keeps going.
+run_effect() {
+    "$@" 2>/dev/null || true
 }
 
 # ---- Chaos Effects ----
@@ -317,14 +327,26 @@ start_input_listener() {
     exec 3< /dev/tty 2>/dev/null || return 1
     (
         while true; do
-            read -r -s -t 1 input <&3 2>/dev/null || continue
-            if [[ "$input" == "$STOP_COMMAND" ]]; then
-                echo "STOP" > "$LOCKFILE"
-                break
+            if read -r -s -t 1 input <&3 2>/dev/null; then
+                if [[ "$input" == "$STOP_COMMAND" ]]; then
+                    echo "STOP" > "$LOCKFILE"
+                    break
+                fi
             fi
+            # Small sleep to prevent CPU spin if read returns immediately
+            sleep 0.1 2>/dev/null || true
         done
     ) &
     INPUT_PID=$!
+}
+
+# Restart the input listener if it died unexpectedly
+ensure_input_listener() {
+    if [[ -n "${INPUT_PID:-}" ]]; then
+        if ! kill -0 "$INPUT_PID" 2>/dev/null; then
+            start_input_listener
+        fi
+    fi
 }
 
 # ---- Cleanup ----
@@ -406,19 +428,24 @@ main() {
         show_bug
     )
 
-    # Main chaos loop
+    # Main chaos loop - runs FOREVER until Virus-stop or Ctrl+C
+    # Every effect is wrapped in run_effect to catch any errors
+    # The loop itself will NEVER exit on its own
     while true; do
         # Check if stop command was entered
         if check_stop_command; then
             break
         fi
 
-        # Pick a random effect
-        local effect="${effects[$((RANDOM % ${#effects[@]}))]}"
-        $effect
+        # Make sure input listener is still alive
+        ensure_input_listener
 
-        # Random pause between effects
-        sleep "0.$((RANDOM % 500 + 100))"
+        # Pick a random effect and run it safely
+        local effect="${effects[$((RANDOM % ${#effects[@]}))]}"
+        run_effect "$effect"
+
+        # Small pause between effects (never fails)
+        sleep "0.$((RANDOM % 500 + 100))" 2>/dev/null || sleep 1 2>/dev/null || true
 
         # Also check stop between effects
         if check_stop_command; then
