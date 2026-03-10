@@ -10,8 +10,6 @@
 #  Secret stop command: type "Virus-stop" to end the prank.
 # ============================================================
 
-set -e
-
 # ---- Configuration ----
 STOP_COMMAND="Virus-stop"
 LOCKFILE="/tmp/.prank_virus_running"
@@ -152,10 +150,6 @@ short_sleep() {
 get_term_size() {
     TERM_LINES=$(tput lines 2>/dev/null || echo 24)
     TERM_COLS=$(tput cols 2>/dev/null || echo 80)
-}
-
-random_color() {
-    echo -e "${COLORS[$((RANDOM % ${#COLORS[@]}))]}"
 }
 
 # ---- Chaos Effects ----
@@ -317,10 +311,13 @@ check_stop_command() {
 }
 
 # Background input listener
+# Open /dev/tty explicitly so the background subshell can read user input
+# (in non-interactive bash, background jobs have stdin redirected to /dev/null)
 start_input_listener() {
+    exec 3< /dev/tty 2>/dev/null || return 1
     (
         while true; do
-            read -r -s -t 1 input 2>/dev/null || continue
+            read -r -s -t 1 input <&3 2>/dev/null || continue
             if [[ "$input" == "$STOP_COMMAND" ]]; then
                 echo "STOP" > "$LOCKFILE"
                 break
@@ -337,6 +334,8 @@ cleanup() {
         kill "$INPUT_PID" 2>/dev/null || true
         wait "$INPUT_PID" 2>/dev/null || true
     fi
+    # Close /dev/tty file descriptor
+    exec 3<&- 2>/dev/null || true
     # Remove lockfile
     rm -f "$LOCKFILE"
     # Reset terminal
